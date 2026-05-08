@@ -43,6 +43,14 @@ client-demo:
 
 demo: server-demo client-demo
 
+server:
+	$(CC) $(CFLAGS) $(CORE_SRC) $(AUTH_SRC) $(CLIENT_REGISTRY_SRC) src/server.c -o server -pthread
+
+client:
+	$(CC) $(CFLAGS) src/client.c -o client
+
+app: server client
+
 test: test-markdown test-command test-server-core test-auth test-client-registry
 
 clean:
