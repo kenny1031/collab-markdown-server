@@ -1,0 +1,46 @@
+# Build outputs
+server
+client
+test_markdown
+*.o
+*.a
+*.so
+*.dylib
+*.out
+
+# Generated files
+doc.md
+FIFO_*
+core
+core.*
+
+# Sanitizer / debug outputs
+*.dSYM/
+*.gcda
+*.gcno
+*.gcov
+
+# CMake / Make temporary files
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
