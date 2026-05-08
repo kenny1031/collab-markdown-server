@@ -350,6 +350,60 @@ static int validate_version_and_get_len(document *doc, uint64_t version,
     return SUCCESS;
 }
 
+static int transform_position_after_pending_ops(document *doc,
+                                                size_t original_pos,
+                                                size_t *out_pos) {
+    if (!doc || !out_pos) {
+        return INVALID_CURSOR_POS;
+    }
+
+    size_t adjusted = original_pos;
+    OpList *lst = find_ops(doc);
+
+    if (!lst) {
+        *out_pos = adjusted;
+        return SUCCESS;
+    }
+
+    for (Op *op = lst->head; op; op = op->next) {
+        if (op->type == OP_INSERT) {
+            size_t insert_len = strlen(op->data);
+
+            /*
+             * Positions in a later command refer to the original committed
+             * version. If a previous pending insertion happened before that
+             * original position, shift the position to the right in the
+             * current working text.
+             */
+            if (op->pos < adjusted) {
+                adjusted += insert_len;
+            }
+        } else if (op->type == OP_DELETE) {
+            size_t del_start = op->pos;
+            size_t del_end = op->pos + op->len;
+
+            if (adjusted > del_start && adjusted < del_end) {
+                return DELETED_POSITION;
+            }
+
+            if (del_start < adjusted) {
+                size_t removed_before_pos = 0;
+
+                if (del_end <= adjusted) {
+                    removed_before_pos = op->len;
+                } else {
+                    removed_before_pos = adjusted - del_start;
+                }
+
+                adjusted -= removed_before_pos;
+            }
+        }
+    }
+
+    *out_pos = adjusted;
+    return SUCCESS;
+}
+
 static int enqueue_insert(document *doc, size_t pos, const char *content) {
     Op *op = malloc(sizeof(Op));
     if (!op) {
@@ -547,6 +601,43 @@ int markdown_delete(document *doc, uint64_t version, size_t pos, size_t len) {
 // ================================
 
 int markdown_newline(document *doc, uint64_t version, size_t pos) {
+    char *working = NULL;
+    size_t n = 0;
+
+    int r = validate_version_and_get_len(doc, version, &working, &n);
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    if (pos > n) {
+        free(working);
+        return INVALID_CURSOR_POS;
+    }
+
+    /*
+     * If the cursor is placed immediately before a space, treat NEWLINE as
+     * splitting the line at a word boundary by replacing that space.
+     *
+     * Example:
+     *   "2. cheese burger" at position after "cheese"
+     * becomes:
+     *   "2. cheese\nburger"
+     *
+     * rather than:
+     *   "2. cheese\n burger"
+     */
+    if (pos < n && working[pos] == ' ') {
+        free(working);
+
+        r = markdown_delete(doc, version, pos, 1);
+        if (r != SUCCESS) {
+            return r;
+        }
+
+        return markdown_insert(doc, version, pos, "\n");
+    }
+
+    free(working);
     return markdown_insert(doc, version, pos, "\n");
 }
 
@@ -569,49 +660,93 @@ int markdown_heading(document *doc, uint64_t version, size_t level,
 }
 
 int markdown_bold(document *doc, uint64_t version, size_t start, size_t end) {
-    char *working = NULL;
-    size_t n = 0;
+    char *committed = NULL;
+    size_t committed_len = 0;
 
-    int r = validate_version_and_get_len(doc, version, &working, &n);
-    if (r != SUCCESS) {
-        return r;
-    }
-
-    free(working);
-
-    if (start >= end || end > n) {
+    if (!doc) {
         return INVALID_CURSOR_POS;
     }
 
-    r = markdown_insert(doc, version, end, "**");
+    if (version != doc->current_version) {
+        return OUTDATED_VERSION;
+    }
+
+    committed = get_committed_text(doc);
+    if (!committed) {
+        return -1;
+    }
+
+    committed_len = strlen(committed);
+    free(committed);
+
+    if (start >= end || end > committed_len) {
+        return INVALID_CURSOR_POS;
+    }
+
+    size_t adjusted_start = start;
+    size_t adjusted_end = end;
+
+    int r = transform_position_after_pending_ops(doc, start, &adjusted_start);
     if (r != SUCCESS) {
         return r;
     }
 
-    return markdown_insert(doc, version, start, "**");
+    r = transform_position_after_pending_ops(doc, end, &adjusted_end);
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    r = markdown_insert(doc, version, adjusted_end, "**");
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    return markdown_insert(doc, version, adjusted_start, "**");
 }
 
 int markdown_italic(document *doc, uint64_t version, size_t start, size_t end) {
-    char *working = NULL;
-    size_t n = 0;
+    char *committed = NULL;
+    size_t committed_len = 0;
 
-    int r = validate_version_and_get_len(doc, version, &working, &n);
-    if (r != SUCCESS) {
-        return r;
-    }
-
-    free(working);
-
-    if (start >= end || end > n) {
+    if (!doc) {
         return INVALID_CURSOR_POS;
     }
 
-    r = markdown_insert(doc, version, end, "*");
+    if (version != doc->current_version) {
+        return OUTDATED_VERSION;
+    }
+
+    committed = get_committed_text(doc);
+    if (!committed) {
+        return -1;
+    }
+
+    committed_len = strlen(committed);
+    free(committed);
+
+    if (start >= end || end > committed_len) {
+        return INVALID_CURSOR_POS;
+    }
+
+    size_t adjusted_start = start;
+    size_t adjusted_end = end;
+
+    int r = transform_position_after_pending_ops(doc, start, &adjusted_start);
     if (r != SUCCESS) {
         return r;
     }
 
-    return markdown_insert(doc, version, start, "*");
+    r = transform_position_after_pending_ops(doc, end, &adjusted_end);
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    r = markdown_insert(doc, version, adjusted_end, "*");
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    return markdown_insert(doc, version, adjusted_start, "*");
 }
 
 int markdown_blockquote(document *doc, uint64_t version, size_t pos) {
@@ -624,13 +759,51 @@ int markdown_blockquote(document *doc, uint64_t version, size_t pos) {
 }
 
 int markdown_ordered_list(document *doc, uint64_t version, size_t pos) {
-    int r = ensure_block_prefix_position(doc, version, &pos);
+    char *working = NULL;
+    size_t n = 0;
+
+    int r = validate_version_and_get_len(doc, version, &working, &n);
     if (r != SUCCESS) {
         return r;
     }
 
-    // Insert a placeholder ordered-list prefix.
-    // The final numbering is normalised in markdown_increment_version().
+    if (pos > n) {
+        free(working);
+        return INVALID_CURSOR_POS;
+    }
+
+    /*
+     * If ORDERED_LIST splits a line at a word boundary and the cursor is
+     * immediately before a space, remove that space first.
+     *
+     * Example:
+     *   "2. cheese burger" at position after "cheese"
+     * becomes:
+     *   "2. cheese\n1. burger"
+     *
+     * rather than:
+     *   "2. cheese\n1.  burger"
+     */
+    if (pos < n && working[pos] == ' ') {
+        free(working);
+
+        r = markdown_delete(doc, version, pos, 1);
+        if (r != SUCCESS) {
+            return r;
+        }
+    } else {
+        free(working);
+    }
+
+    r = ensure_block_prefix_position(doc, version, &pos);
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    /*
+     * Insert a placeholder ordered-list prefix.
+     * The final numbering is normalised in markdown_increment_version().
+     */
     return markdown_insert(doc, version, pos, "1. ");
 }
 
@@ -644,26 +817,48 @@ int markdown_unordered_list(document *doc, uint64_t version, size_t pos) {
 }
 
 int markdown_code(document *doc, uint64_t version, size_t start, size_t end) {
-    char *working = NULL;
-    size_t n = 0;
+    char *committed = NULL;
+    size_t committed_len = 0;
 
-    int r = validate_version_and_get_len(doc, version, &working, &n);
-    if (r != SUCCESS) {
-        return r;
-    }
-
-    free(working);
-
-    if (start >= end || end > n) {
+    if (!doc) {
         return INVALID_CURSOR_POS;
     }
 
-    r = markdown_insert(doc, version, end, "`");
+    if (version != doc->current_version) {
+        return OUTDATED_VERSION;
+    }
+
+    committed = get_committed_text(doc);
+    if (!committed) {
+        return -1;
+    }
+
+    committed_len = strlen(committed);
+    free(committed);
+
+    if (start >= end || end > committed_len) {
+        return INVALID_CURSOR_POS;
+    }
+
+    size_t adjusted_start = start;
+    size_t adjusted_end = end;
+
+    int r = transform_position_after_pending_ops(doc, start, &adjusted_start);
     if (r != SUCCESS) {
         return r;
     }
 
-    return markdown_insert(doc, version, start, "`");
+    r = transform_position_after_pending_ops(doc, end, &adjusted_end);
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    r = markdown_insert(doc, version, adjusted_end, "`");
+    if (r != SUCCESS) {
+        return r;
+    }
+
+    return markdown_insert(doc, version, adjusted_start, "`");
 }
 
 int markdown_horizontal_rule(document *doc, uint64_t version, size_t pos) {
@@ -681,22 +876,41 @@ int markdown_link(document *doc, uint64_t version, size_t start, size_t end,
         return INVALID_CURSOR_POS;
     }
 
-    char *working = NULL;
-    size_t n = 0;
+    if (!doc) {
+        return INVALID_CURSOR_POS;
+    }
 
-    int r = validate_version_and_get_len(doc, version, &working, &n);
+    if (version != doc->current_version) {
+        return OUTDATED_VERSION;
+    }
+
+    char *committed = get_committed_text(doc);
+    if (!committed) {
+        return -1;
+    }
+
+    size_t committed_len = strlen(committed);
+    free(committed);
+
+    if (start >= end || end > committed_len) {
+        return INVALID_CURSOR_POS;
+    }
+
+    size_t adjusted_start = start;
+    size_t adjusted_end = end;
+
+    int r = transform_position_after_pending_ops(doc, start, &adjusted_start);
     if (r != SUCCESS) {
         return r;
     }
 
-    free(working);
-
-    if (start >= end || end > n) {
-        return INVALID_CURSOR_POS;
+    r = transform_position_after_pending_ops(doc, end, &adjusted_end);
+    if (r != SUCCESS) {
+        return r;
     }
 
     size_t url_len = strlen(url);
-    size_t suffix_len = url_len + 4; // "](" + url + ")"
+    size_t suffix_len = url_len + 4;
 
     char *suffix = malloc(suffix_len + 1);
     if (!suffix) {
@@ -705,14 +919,14 @@ int markdown_link(document *doc, uint64_t version, size_t start, size_t end,
 
     snprintf(suffix, suffix_len + 1, "](%s)", url);
 
-    r = markdown_insert(doc, version, end, suffix);
+    r = markdown_insert(doc, version, adjusted_end, suffix);
     free(suffix);
 
     if (r != SUCCESS) {
         return r;
     }
 
-    return markdown_insert(doc, version, start, "[");
+    return markdown_insert(doc, version, adjusted_start, "[");
 }
 
 // ================================
