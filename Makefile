@@ -5,6 +5,7 @@ SANFLAGS = -fsanitize=address,undefined
 MARKDOWN_SRC = src/markdown.c
 COMMAND_SRC = src/command.c
 SERVER_CORE_SRC = src/server_core.c
+AUTH_SRC = src/auth.c
 
 CORE_SRC = $(MARKDOWN_SRC) $(COMMAND_SRC) $(SERVER_CORE_SRC)
 
@@ -23,6 +24,11 @@ test-server-core:
 	$(CC) $(CFLAGS) $(CORE_SRC) tests/test_server_core.c -o test_server_core
 	./test_server_core
 
+test-auth: CFLAGS += $(SANFLAGS)
+test-auth:
+	$(CC) $(CFLAGS) $(AUTH_SRC) tests/test_auth.c -o test_auth
+	./test_auth
+
 server-demo:
 	$(CC) $(CFLAGS) $(CORE_SRC) src/server_demo.c -o server_demo
 
@@ -31,7 +37,7 @@ client-demo:
 
 demo: server-demo client-demo
 
-test: test-markdown test-command test-server-core
+test: test-markdown test-command test-server-core test-auth
 
 clean:
-	rm -f test_markdown test_command test_server_core server client server_demo client_demo *.o src/*.o tests/*.o doc.md FIFO_*
+	rm -f test_markdown test_command test_server_core test_auth server client server_demo client_demo *.o src/*.o tests/*.o doc.md FIFO_* test_roles.txt
