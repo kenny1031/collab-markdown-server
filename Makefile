@@ -6,6 +6,7 @@ MARKDOWN_SRC = src/markdown.c
 COMMAND_SRC = src/command.c
 SERVER_CORE_SRC = src/server_core.c
 AUTH_SRC = src/auth.c
+CLIENT_REGISTRY_SRC = src/client_registry.c
 
 CORE_SRC = $(MARKDOWN_SRC) $(COMMAND_SRC) $(SERVER_CORE_SRC)
 
@@ -29,6 +30,11 @@ test-auth:
 	$(CC) $(CFLAGS) $(AUTH_SRC) tests/test_auth.c -o test_auth
 	./test_auth
 
+test-client-registry: CFLAGS += $(SANFLAGS)
+test-client-registry:
+	$(CC) $(CFLAGS) $(CLIENT_REGISTRY_SRC) tests/test_client_registry.c -o test_client_registry
+	./test_client_registry
+
 server-demo:
 	$(CC) $(CFLAGS) $(CORE_SRC) src/server_demo.c -o server_demo
 
@@ -37,7 +43,7 @@ client-demo:
 
 demo: server-demo client-demo
 
-test: test-markdown test-command test-server-core test-auth
+test: test-markdown test-command test-server-core test-auth test-client-registry
 
 clean:
-	rm -f test_markdown test_command test_server_core test_auth server client server_demo client_demo *.o src/*.o tests/*.o doc.md FIFO_* test_roles.txt
+	rm -f test_markdown test_command test_server_core test_auth test_client_registry server client server_demo client_demo *.o src/*.o tests/*.o doc.md FIFO_* test_roles.txt
